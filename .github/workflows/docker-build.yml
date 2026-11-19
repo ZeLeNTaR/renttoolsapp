@@ -1,0 +1,78 @@
+name: Build and Push Docker Images to GHCR
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set lowercase image name
+        run: echo "IMAGE_NAME_LC=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - name: Prepare env for compose validation
+        run: echo "SESSION_SECRET=ci-dummy" > deploy/.env
+
+      - name: Validate docker-compose config
+        run: docker compose -f deploy/docker-compose.yml config > /dev/null
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build backend image (CI smoke check)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          tags: renttoolsapp-backend:ci-${{ github.sha }}
+
+      - name: Build frontend image (CI smoke check)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          tags: renttoolsapp-frontend:ci-${{ github.sha }}
+
+      - name: Push backend to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}-backend:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}-backend:sha-${{ github.sha }}
+
+      - name: Push frontend to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}-frontend:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}-frontend:sha-${{ github.sha }}
